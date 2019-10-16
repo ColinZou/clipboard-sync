@@ -27,12 +27,14 @@ const (
 )
 
 var (
-	connected            bool
-	serverMode           bool
-	clipboardContent     string
-	clipboardContentLock sync.RWMutex
-	connectedLock        sync.RWMutex
-	clientMap            map[net.Addr]net.Conn
+	connected                bool
+	serverMode               bool
+	clipboardContent         string
+	clipboardContentLock     sync.RWMutex
+	connectedLock            sync.RWMutex
+	connectionLostStatusLock sync.RWMutex
+	clientMap                map[net.Addr]net.Conn
+	connectionLostStatusMap  map[int]bool
 )
 var log = logging.MustGetLogger("CLIPBOARD-SYNC")
 
@@ -57,6 +59,17 @@ func setClipboardContent(content string) {
 	clipboardContentLock.Lock()
 	defer clipboardContentLock.Unlock()
 	clipboardContent = content
+}
+
+func getConnectionLostStatus(no int) bool {
+	connectionLostStatusLock.RLock()
+	defer connectionLostStatusLock.RUnlock()
+	return connectionLostStatusMap[no]
+}
+func setConnectionLostStatus(no int, status bool) {
+	connectionLostStatusLock.Lock()
+	defer connectionLostStatusLock.Unlock()
+	connectionLostStatusMap[no] = status
 }
 
 func search(searchIn []string, toSearch string) bool {
@@ -90,7 +103,7 @@ func isClosedErr(err error) bool {
 		strings.Contains(err.Error(), "closed network") ||
 		strings.Contains(err.Error(), "An existing connection was forcibly closed by the remote host.")
 }
-func handleConnectionRead(c net.Conn, recvChannel chan string, closeChannel chan struct{}) {
+func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struct{}, no int) {
 	log.Infof("%s connected", c.RemoteAddr().String())
 	for {
 		rawBytes, err := bufio.NewReader(c).ReadBytes(DelimiterByte)
@@ -99,24 +112,31 @@ func handleConnectionRead(c net.Conn, recvChannel chan string, closeChannel chan
 			if isClosedErr(err) {
 				log.Error("Disconnected")
 				delete(clientMap, c.RemoteAddr())
-				if nil != closeChannel {
+				if nil != closeChannel && !getConnectionLostStatus(no){
 					close(closeChannel)
 				}
+				setConnectionLostStatus(no, true)
 				break
 			}
-			return
+			continue
 		}
 		content := strings.TrimSpace(string(rawBytes[0 : len(rawBytes)-1]))
 		log.Debugf("Received clipboard content %s", content)
 		if len(content) > 0 {
 			recvChannel <- content
 		}
+		if getConnectionLostStatus(no) {
+			break
+		}
 	}
 }
 
-func handleConnectionWrite(conn net.Conn, senderChannel chan string, closeChannel chan struct{}) {
+func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan struct{}, no int) {
 	for {
 		content := <-senderChannel
+		if getConnectionLostStatus(no) {
+			break
+		}
 		if len(content) > 0 {
 			c, err := conn.Write([] byte(content))
 			_, err = conn.Write([]byte{DelimiterByte})
@@ -125,9 +145,10 @@ func handleConnectionWrite(conn net.Conn, senderChannel chan string, closeChanne
 				if isClosedErr(err) {
 					log.Error("Remote connection disconnected")
 					delete(clientMap, conn.RemoteAddr())
-					if nil != closeChannel {
+					if nil != closeChannel && !getConnectionLostStatus(no){
 						close(closeChannel)
 					}
+					setConnectionLostStatus(no, true)
 					break
 				}
 				continue
@@ -153,6 +174,7 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 	defer close(senderChannel)
 	allowedAddress := strings.Split(AllowedNetwork, ",")
 	go func() {
+		number := 0
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -171,17 +193,20 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 				_ = c.Close()
 				continue
 			}
+			number++
 			setConnected(true)
 			// save the client reference
 			clientMap[c.RemoteAddr()] = c
-			go handleConnectionRead(c, recvChannel, nil)
-			go handleConnectionWrite(c, senderChannel, nil)
+			setConnectionLostStatus(number, false)
+			go readFromRemote(c, recvChannel, nil, number)
+			go sendToRemote(c, senderChannel, nil, number)
 		}
 	}()
 	<-serverChannel
 }
 
 func startClient(serverHost string, port int32, recvChannel chan string, sendChannel chan string) {
+	number := 0
 	for {
 		setConnected(false)
 		address := fmt.Sprintf("%s:%d", serverHost, port)
@@ -191,11 +216,15 @@ func startClient(serverHost string, port int32, recvChannel chan string, sendCha
 			log.Errorf("Failed to connect %s, retrying... ", err)
 			continue
 		}
+		number++
 		setConnected(true)
 		closeChannel := make(chan struct{})
-		go handleConnectionRead(conn, recvChannel, closeChannel)
-		go handleConnectionWrite(conn, sendChannel, closeChannel)
+		setConnectionLostStatus(number, false)
+		go readFromRemote(conn, recvChannel, closeChannel, number)
+		go sendToRemote(conn, sendChannel, closeChannel, number)
 		<-closeChannel
+		// mark the connection was disconnected
+		setConnectionLostStatus(number, true)
 	}
 }
 
@@ -300,6 +329,7 @@ func main() {
 	sendChannel := make(chan string)
 	// Connected clients
 	clientMap = make(map[net.Addr]net.Conn)
+	connectionLostStatusMap = make(map[int]bool)
 	// Monitoring change for clipboard
 	go monitorLocalClipboard(sendChannel)
 	// Server/Client startup
