@@ -16,25 +16,27 @@ import (
 )
 
 const (
-	ServerAddr    = "10.0.2.2"
-	ListenPort    = 61234
+	ServerAddr         = "10.0.2.2"
+	ListenPort         = 61234
 	SingleInstancePort = 61235
-	ConnType      = "tcp4"
-	FlagDebug     = "debug"
-	FlagClient    = "client"
-	DelimiterByte = byte(14)
-	AllowedNetwork = "127.0.0.1"
+	ConnType           = "tcp4"
+	FlagDebug          = "debug"
+	FlagClient         = "client"
+	DelimiterByte      = byte(14)
+	AllowedNetwork     = "127.0.0.1"
 )
-var(
-	connected bool
-	serverMode bool
-	clipboardContent string
+
+var (
+	connected            bool
+	serverMode           bool
+	clipboardContent     string
 	clipboardContentLock sync.RWMutex
-	connectedLock sync.RWMutex
-	clientMap map[net.Addr]net.Conn
+	connectedLock        sync.RWMutex
+	clientMap            map[net.Addr]net.Conn
 )
 var log = logging.MustGetLogger("CLIPBOARD-SYNC")
-func setConnected(val bool)  {
+
+func setConnected(val bool) {
 	connectedLock.Lock()
 	defer connectedLock.Unlock()
 	connected = val
@@ -51,7 +53,7 @@ func getClipboardContent() string {
 	defer clipboardContentLock.RUnlock()
 	return clipboardContent
 }
-func setClipboardContent(content string)  {
+func setClipboardContent(content string) {
 	clipboardContentLock.Lock()
 	defer clipboardContentLock.Unlock()
 	clipboardContent = content
@@ -66,7 +68,7 @@ func search(searchIn []string, toSearch string) bool {
 	return false
 }
 
-func readCommandArguments() (debug bool, client bool)  {
+func readCommandArguments() (debug bool, client bool) {
 	args := os.Args
 	clientMode := search(args, FlagClient)
 	debugMode := search(args, FlagDebug)
@@ -84,7 +86,9 @@ func readCommandArguments() (debug bool, client bool)  {
 	return debugMode, clientMode
 }
 func isClosedErr(err error) bool {
-	return err == io.EOF || strings.Contains(err.Error(), "closed network");
+	return err == io.EOF ||
+		strings.Contains(err.Error(), "closed network") ||
+		strings.Contains(err.Error(), "An existing connection was forcibly closed by the remote host.")
 }
 func handleConnectionRead(c net.Conn, recvChannel chan string, closeChannel chan struct{}) {
 	log.Infof("%s connected", c.RemoteAddr().String())
@@ -95,15 +99,14 @@ func handleConnectionRead(c net.Conn, recvChannel chan string, closeChannel chan
 			if isClosedErr(err) {
 				log.Error("Disconnected")
 				delete(clientMap, c.RemoteAddr())
-				_ = c.Close()
-				if  nil != closeChannel {
+				if nil != closeChannel {
 					close(closeChannel)
 				}
 				break
 			}
 			return
 		}
-		content := strings.TrimSpace(string(rawBytes[0 : len(rawBytes) - 1]))
+		content := strings.TrimSpace(string(rawBytes[0 : len(rawBytes)-1]))
 		log.Debugf("Received clipboard content %s", content)
 		if len(content) > 0 {
 			recvChannel <- content
@@ -112,18 +115,17 @@ func handleConnectionRead(c net.Conn, recvChannel chan string, closeChannel chan
 }
 
 func handleConnectionWrite(conn net.Conn, senderChannel chan string, closeChannel chan struct{}) {
-	for{
-		content := <- senderChannel
+	for {
+		content := <-senderChannel
 		if len(content) > 0 {
 			c, err := conn.Write([] byte(content))
 			_, err = conn.Write([]byte{DelimiterByte})
 			if nil != err {
 				log.Errorf("Failed to send clipboard to remote host: %v", err)
 				if isClosedErr(err) {
-					log.Error("Disconnected")
+					log.Error("Remote connection disconnected")
 					delete(clientMap, conn.RemoteAddr())
-					_ = conn.Close()
-					if  nil != closeChannel {
+					if nil != closeChannel {
 						close(closeChannel)
 					}
 					break
@@ -137,7 +139,7 @@ func handleConnectionWrite(conn net.Conn, senderChannel chan string, closeChanne
 
 /**
 启动服务器
- */
+*/
 func startServer(listenHost string, port int32, recvChannel chan string, senderChannel chan string) {
 	log.Infof("Starting server...")
 	log.Infof("Listening port %v at %v", listenHost, port)
@@ -151,7 +153,7 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 	defer close(senderChannel)
 	allowedAddress := strings.Split(AllowedNetwork, ",")
 	go func() {
-		for{
+		for {
 			c, err := ln.Accept()
 			if err != nil {
 				log.Errorf("Failed to accept connection %v", err)
@@ -164,7 +166,7 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 					ok = true
 				}
 			}
-			if !ok{
+			if !ok {
 				log.Error("Only allowed connection from 127.0.0.1")
 				_ = c.Close()
 				continue
@@ -172,19 +174,19 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 			setConnected(true)
 			// save the client reference
 			clientMap[c.RemoteAddr()] = c
-			go handleConnectionRead(c, recvChannel,nil)
+			go handleConnectionRead(c, recvChannel, nil)
 			go handleConnectionWrite(c, senderChannel, nil)
 		}
 	}()
-	<- serverChannel
+	<-serverChannel
 }
 
-func startClient(serverHost string, port int32, recvChannel chan string, sendChannel chan string)  {
+func startClient(serverHost string, port int32, recvChannel chan string, sendChannel chan string) {
 	for {
 		setConnected(false)
 		address := fmt.Sprintf("%s:%d", serverHost, port)
 		log.Infof("About to connect server %s", address)
-		conn, err  := net.Dial(ConnType, address)
+		conn, err := net.Dial(ConnType, address)
 		if nil != err {
 			log.Errorf("Failed to connect %s, retrying... ", err)
 			continue
@@ -193,11 +195,11 @@ func startClient(serverHost string, port int32, recvChannel chan string, sendCha
 		closeChannel := make(chan struct{})
 		go handleConnectionRead(conn, recvChannel, closeChannel)
 		go handleConnectionWrite(conn, sendChannel, closeChannel)
-		<- closeChannel
+		<-closeChannel
 	}
 }
 
-func handleClipboardReceived(recvChannel chan string)  {
+func handleClipboardReceived(recvChannel chan string) {
 	for {
 		newContent := <-recvChannel
 		oldContent := getClipboardContent()
@@ -247,7 +249,7 @@ func setupLogging(debug bool) *os.File {
 	var format = logging.MustStringFormatter(
 		`%{time:15:04:05.000} %{shortfunc}  %{level:.4s} %{id:03x} %{message}`,
 	)
-	logFile, err := os.OpenFile("clipboard.log", os.O_RDWR | os.O_CREATE, 0664)
+	logFile, err := os.OpenFile("clipboard.log", os.O_RDWR|os.O_CREATE, 0664)
 	if err != nil {
 		fmt.Print("Failed to open log file")
 	}
@@ -256,10 +258,9 @@ func setupLogging(debug bool) *os.File {
 	errorBackend := logging.NewLogBackend(os.Stderr, "", 0)
 	errorFormatter := logging.NewBackendFormatter(errorBackend, format)
 
-
 	defaultBackendLevel := logging.AddModuleLevel(infoBackend)
 	logFileBackendLevel := logging.AddModuleLevel(fileBackend)
-	if debug{
+	if debug {
 		defaultBackendLevel.SetLevel(logging.DEBUG, "")
 		logFileBackendLevel.SetLevel(logging.DEBUG, "")
 	} else {
@@ -274,16 +275,16 @@ func setupLogging(debug bool) *os.File {
 func singleInstance() error {
 	listenAddress := fmt.Sprintf(":%d", SingleInstancePort)
 	if _, err := net.Listen(ConnType, listenAddress); err != nil {
-		return errors.New("Another instance were running" )
+		return errors.New("Another instance were running")
 	}
 	return nil
 }
 
-func main()  {
+func main() {
 	debug, client := readCommandArguments()
 	serverMode = !client
 	logFile := setupLogging(debug)
-	if nil != logFile{
+	if nil != logFile {
 		defer func() {
 			_ = logFile.Close()
 		}()
@@ -321,4 +322,3 @@ func main()  {
 	}()
 	<-cleanupDone
 }
-
