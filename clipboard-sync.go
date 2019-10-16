@@ -113,6 +113,7 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 				log.Error("Disconnected")
 				delete(clientMap, c.RemoteAddr())
 				if nil != closeChannel && !getConnectionLostStatus(no){
+					_ = c.Close()
 					close(closeChannel)
 				}
 				setConnectionLostStatus(no, true)
@@ -146,6 +147,7 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 					log.Error("Remote connection disconnected")
 					delete(clientMap, conn.RemoteAddr())
 					if nil != closeChannel && !getConnectionLostStatus(no){
+						_ = conn.Close()
 						close(closeChannel)
 					}
 					setConnectionLostStatus(no, true)
