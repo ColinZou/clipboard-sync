@@ -159,7 +159,26 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 		}
 	}
 }
-
+func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
+	data := []byte(" " + string(DelimiterByte))
+	for {
+		_, err := conn.Write(data)
+		if nil != err {
+			log.Error("Failed to send keep alive package: %v", err)
+			if isClosedErr(err) {
+				log.Error("Lost remote connection")
+			}
+			delete(clientMap, conn.RemoteAddr())
+			if nil != closeChannel && !getConnectionLostStatus(no) {
+				_ = conn.Close()
+				close(closeChannel)
+			}
+			setConnectionLostStatus(no, true)
+			break
+		}
+		time.Sleep(time.Millisecond * 200)
+	}
+}
 /**
 启动服务器
 */
@@ -224,6 +243,7 @@ func startClient(serverHost string, port int32, recvChannel chan string, sendCha
 		setConnectionLostStatus(number, false)
 		go readFromRemote(conn, recvChannel, closeChannel, number)
 		go sendToRemote(conn, sendChannel, closeChannel, number)
+		go clientKeepAlive(conn, closeChannel, number)
 		<-closeChannel
 		// mark the connection was disconnected
 		setConnectionLostStatus(number, true)
