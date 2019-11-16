@@ -66,10 +66,19 @@ func getConnectionLostStatus(no int) bool {
 	defer connectionLostStatusLock.RUnlock()
 	return connectionLostStatusMap[no]
 }
-func setConnectionLostStatus(no int, status bool) {
+func setConnectionLostStatus(no int, status bool) bool {
 	connectionLostStatusLock.Lock()
 	defer connectionLostStatusLock.Unlock()
-	connectionLostStatusMap[no] = status
+	oldValue, ok := connectionLostStatusMap[no]
+	if !ok {
+		connectionLostStatusMap[no] = status
+		return true
+	}
+	if oldValue != status {
+		connectionLostStatusMap[no] = status
+		return true
+	}
+	return false
 }
 
 func search(searchIn []string, toSearch string) bool {
@@ -114,9 +123,10 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 				delete(clientMap, c.RemoteAddr())
 				if nil != closeChannel && !getConnectionLostStatus(no){
 					_ = c.Close()
+				}
+				if setConnectionLostStatus(no, true) {
 					close(closeChannel)
 				}
-				setConnectionLostStatus(no, true)
 				break
 			}
 			continue
@@ -148,9 +158,10 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 					delete(clientMap, conn.RemoteAddr())
 					if nil != closeChannel && !getConnectionLostStatus(no){
 						_ = conn.Close()
+					}
+					if setConnectionLostStatus(no, true) {
 						close(closeChannel)
 					}
-					setConnectionLostStatus(no, true)
 					break
 				}
 				continue
@@ -171,9 +182,10 @@ func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
 			delete(clientMap, conn.RemoteAddr())
 			if nil != closeChannel && !getConnectionLostStatus(no) {
 				_ = conn.Close()
+			}
+			if setConnectionLostStatus(no, true) {
 				close(closeChannel)
 			}
-			setConnectionLostStatus(no, true)
 			break
 		}
 		time.Sleep(time.Millisecond * 200)
