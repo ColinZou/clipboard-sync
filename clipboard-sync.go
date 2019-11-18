@@ -316,16 +316,18 @@ func setupLogging(debug bool) *os.File {
 	)
 	folder, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 	fileName := filepath.Base(os.Args[0])
-	logFile, err := os.OpenFile(filepath.Join(folder, fileName + "-output.log"), os.O_RDWR|os.O_CREATE, 0664)
+	logFilePath := filepath.Join(folder, fileName + "-output.log")
+	logFile, err := os.OpenFile(logFilePath, os.O_RDWR|os.O_CREATE, 0664)
 	if err != nil {
 		fmt.Print("Failed to open log file")
 	}
-	infoBackend := logging.NewLogBackend(os.Stdout, "", 0)
+	println("Will write log to ", logFilePath)
+	stdoutBackend := logging.NewLogBackend(os.Stdout, "", 0)
 	fileBackend := logging.NewLogBackend(logFile, "", 0)
 	errorBackend := logging.NewLogBackend(os.Stderr, "", 0)
 	errorFormatter := logging.NewBackendFormatter(errorBackend, format)
 
-	defaultBackendLevel := logging.AddModuleLevel(infoBackend)
+	defaultBackendLevel := logging.AddModuleLevel(stdoutBackend)
 	logFileBackendLevel := logging.AddModuleLevel(fileBackend)
 	if debug {
 		defaultBackendLevel.SetLevel(logging.DEBUG, "")
