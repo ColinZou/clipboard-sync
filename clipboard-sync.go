@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ var (
 	clientMap                map[net.Addr]net.Conn
 	connectionLostStatusMap  map[int]bool
 )
+
 var log = logging.MustGetLogger("CLIPBOARD-SYNC")
 
 func setConnected(val bool) {
@@ -312,7 +314,9 @@ func setupLogging(debug bool) *os.File {
 	var format = logging.MustStringFormatter(
 		`%{time:15:04:05.000} %{shortfunc}  %{level:.4s} %{id:03x} %{message}`,
 	)
-	logFile, err := os.OpenFile("clipboard.log", os.O_RDWR|os.O_CREATE, 0664)
+	folder, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+	fileName := filepath.Base(os.Args[0])
+	logFile, err := os.OpenFile(filepath.Join(folder, fileName + "-output.log"), os.O_RDWR|os.O_CREATE, 0664)
 	if err != nil {
 		fmt.Print("Failed to open log file")
 	}
