@@ -126,7 +126,7 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 				if nil != closeChannel && !getConnectionLostStatus(no){
 					_ = c.Close()
 				}
-				if setConnectionLostStatus(no, true) {
+				if setConnectionLostStatus(no, true) && nil != closeChannel {
 					close(closeChannel)
 				}
 				break
@@ -161,7 +161,7 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 					if nil != closeChannel && !getConnectionLostStatus(no){
 						_ = conn.Close()
 					}
-					if setConnectionLostStatus(no, true) {
+					if setConnectionLostStatus(no, true) && nil != closeChannel {
 						close(closeChannel)
 					}
 					break
@@ -185,7 +185,7 @@ func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
 			if nil != closeChannel && !getConnectionLostStatus(no) {
 				_ = conn.Close()
 			}
-			if setConnectionLostStatus(no, true) {
+			if setConnectionLostStatus(no, true)  && nil != closeChannel{
 				close(closeChannel)
 			}
 			break
@@ -324,19 +324,25 @@ func setupLogging(debug bool) *os.File {
 	println("Will write log to ", logFilePath)
 	stdoutBackend := logging.NewLogBackend(os.Stdout, "", 0)
 	fileBackend := logging.NewLogBackend(logFile, "", 0)
-	errorBackend := logging.NewLogBackend(os.Stderr, "", 0)
+	errorBackend := logging.NewLogBackend(logFile, "", 0)
 	errorFormatter := logging.NewBackendFormatter(errorBackend, format)
+
+	logging.NewBackendFormatter(stdoutBackend, format)
+	logging.NewBackendFormatter(fileBackend, format)
 
 	defaultBackendLevel := logging.AddModuleLevel(stdoutBackend)
 	logFileBackendLevel := logging.AddModuleLevel(fileBackend)
+	errorBackendLevel := logging.AddModuleLevel(errorBackend)
 	if debug {
 		defaultBackendLevel.SetLevel(logging.DEBUG, "")
 		logFileBackendLevel.SetLevel(logging.DEBUG, "")
+		errorBackendLevel.SetLevel(logging.DEBUG, "")
 	} else {
 		defaultBackendLevel.SetLevel(logging.WARNING, "")
 		logFileBackendLevel.SetLevel(logging.WARNING, "")
-	}
+		errorBackendLevel.SetLevel(logging.WARNING, "")
 
+	}
 	logging.SetBackend(defaultBackendLevel, errorFormatter, logFileBackendLevel)
 	return logFile
 }
