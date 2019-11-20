@@ -134,7 +134,7 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 			continue
 		}
 		content := strings.TrimSpace(string(rawBytes[0 : len(rawBytes)-1]))
-		log.Debugf("Received clipboard content %s", content)
+		log.Debugf("Received clipboard content(%d) %s", len(content), content)
 		if len(content) > 0 {
 			recvChannel <- content
 		}
