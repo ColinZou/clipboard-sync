@@ -35,6 +35,7 @@ var (
 	connectedLock            sync.RWMutex
 	connectionLostStatusLock sync.RWMutex
 	clientMap                map[net.Addr]net.Conn
+	clientChannelMap		map[net.Addr]chan string
 	connectionLostStatusMap  map[int]bool
 )
 
@@ -158,6 +159,11 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 				if isClosedErr(err) {
 					log.Error("Remote connection disconnected")
 					delete(clientMap, conn.RemoteAddr())
+					clientChannel := clientChannelMap[conn.RemoteAddr()]
+					if nil != clientChannel {
+						close(clientChannel)
+					}
+					delete(clientChannelMap, conn.RemoteAddr())
 					if nil != closeChannel && !getConnectionLostStatus(no){
 						_ = conn.Close()
 					}
@@ -182,6 +188,10 @@ func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
 				log.Error("Lost remote connection")
 			}
 			delete(clientMap, conn.RemoteAddr())
+			clientChannel := clientChannelMap[conn.RemoteAddr()]
+			if nil != clientChannel {
+				close(clientChannel)
+			}
 			if nil != closeChannel && !getConnectionLostStatus(no) {
 				_ = conn.Close()
 			}
@@ -232,9 +242,20 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 			setConnected(true)
 			// save the client reference
 			clientMap[c.RemoteAddr()] = c
+			clientChannel := make(chan string)
+			clientChannelMap[c.RemoteAddr()] = clientChannel
 			setConnectionLostStatus(number, false)
 			go readFromRemote(c, recvChannel, nil, number)
-			go sendToRemote(c, senderChannel, nil, number)
+			go sendToRemote(c, clientChannel, nil, number)
+		}
+	}()
+	//向所有客户端发送剪贴板
+	go func() {
+		for {
+			content := <-senderChannel
+			for _,v := range clientChannelMap {
+				v <- content
+			}
 		}
 	}()
 	<-serverChannel
@@ -300,6 +321,7 @@ func monitorLocalClipboard(sendChanel chan string) {
 			oldContent = newContent
 			setClipboardContent(newContent)
 			// client connected OR server with client connection(s)
+			log.Debugf("Is server mode ? %v; Connected ? %v; Size of client map %v", serverMode, getConnected(), len(clientMap))
 			if (getConnected() && !serverMode) || (serverMode && len(clientMap) > 0) {
 				log.Debugf("Send local clipboard change: %s", newContent)
 				sendChanel <- newContent
@@ -375,6 +397,7 @@ func main() {
 	sendChannel := make(chan string)
 	// Connected clients
 	clientMap = make(map[net.Addr]net.Conn)
+	clientChannelMap = make(map[net.Addr]chan string)
 	connectionLostStatusMap = make(map[int]bool)
 	// Monitoring change for clipboard
 	go monitorLocalClipboard(sendChannel)
