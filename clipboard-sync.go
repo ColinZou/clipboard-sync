@@ -286,6 +286,10 @@ func startClient(serverHost string, port int32, recvChannel chan string, sendCha
 }
 
 func handleClipboardReceived(recvChannel chan string) {
+	defer func() {
+		log.Errorf("Restarted the goroutine handleClipboardReceived")
+		go handleClipboardReceived(recvChannel)
+	}()
 	for {
 		newContent := <-recvChannel
 		oldContent := getClipboardContent()
