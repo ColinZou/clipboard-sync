@@ -135,8 +135,8 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 			continue
 		}
 		content := strings.TrimSpace(string(rawBytes[0 : len(rawBytes)-1]))
-		log.Debugf("Received clipboard content(%d) %s", len(content), content)
 		if len(content) > 0 {
+			log.Debugf("Received clipboard content(%d) %s", len(content), content)
 			recvChannel <- content
 		}
 		if getConnectionLostStatus(no) {
@@ -303,6 +303,13 @@ func handleClipboardReceived(recvChannel chan string) {
 }
 
 func monitorLocalClipboard(sendChanel chan string) {
+	/**
+	never quit
+	 */
+	defer func() {
+		log.Errorf("Restarted the goroutine of monitorLocalClipboard")
+		go monitorLocalClipboard(sendChanel)
+	}()
 	oldContent, err := clipboard.ReadAll()
 	if nil != err {
 		log.Errorf("Read clipboard failed %v", err)
@@ -314,6 +321,7 @@ func monitorLocalClipboard(sendChanel chan string) {
 		time.Sleep(time.Millisecond * 200)
 		newContent, err := clipboard.ReadAll()
 		if nil != err {
+			log.Errorf("Failed to read clipboard content: %v", err)
 			continue
 		}
 		oldContent = getClipboardContent()
@@ -334,7 +342,7 @@ func monitorLocalClipboard(sendChanel chan string) {
 
 func setupLogging(debug bool) *os.File {
 	var format = logging.MustStringFormatter(
-		`%{time:15:04:05.000} %{shortfunc}  %{level:.4s} %{id:03x} %{message}`,
+		` %{time:15:04:05.000} %{shortfunc}  %{level:.4s} %{id:03x} %{message}`,
 	)
 	folder, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 	fileName := filepath.Base(os.Args[0])
