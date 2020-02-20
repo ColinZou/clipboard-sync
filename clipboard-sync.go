@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -148,7 +149,9 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan struct{}, no int) {
 	for {
 		content := <-senderChannel
+		log.Debugf("About to sending content '%v' to %v", content, conn.RemoteAddr())
 		if getConnectionLostStatus(no) {
+			log.Errorf("%v was not connected", conn.RemoteAddr())
 			break
 		}
 		if len(content) > 0 {
@@ -254,6 +257,7 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 		for {
 			content := <-senderChannel
 			for _,v := range clientChannelMap {
+				log.Debugf("Sending content '%v' to %v \n", content, v)
 				v <- content
 			}
 		}
@@ -305,7 +309,9 @@ func handleClipboardReceived(recvChannel chan string) {
 		}
 	}
 }
-
+func isGeneralClipboardReadError(err error) bool {
+	return strings.Contains(fmt.Sprintf("%v", err), "The operation completed successfully");
+}
 func monitorLocalClipboard(sendChanel chan string) {
 	/**
 	never quit
@@ -315,7 +321,7 @@ func monitorLocalClipboard(sendChanel chan string) {
 		go monitorLocalClipboard(sendChanel)
 	}()
 	oldContent, err := clipboard.ReadAll()
-	if nil != err {
+	if nil != err && !isGeneralClipboardReadError(err) {
 		log.Errorf("Read clipboard failed %v", err)
 		oldContent = ""
 	}
@@ -324,7 +330,7 @@ func monitorLocalClipboard(sendChanel chan string) {
 	for {
 		time.Sleep(time.Millisecond * 200)
 		newContent, err := clipboard.ReadAll()
-		if nil != err {
+		if nil != err && !isGeneralClipboardReadError(err) {
 			log.Errorf("Failed to read clipboard content: %v", err)
 			continue
 		}
@@ -332,6 +338,9 @@ func monitorLocalClipboard(sendChanel chan string) {
 		if len(newContent) > 0 && newContent != oldContent {
 			oldContent = newContent
 			setClipboardContent(newContent)
+			if runtime.GOOS == "windows" {
+				clipboard.WriteAll(oldContent)
+			}
 			// client connected OR server with client connection(s)
 			log.Debugf("Is server mode ? %v; Connected ? %v; Size of client map %v", serverMode, getConnected(), len(clientMap))
 			if (getConnected() && !serverMode) || (serverMode && len(clientMap) > 0) {
