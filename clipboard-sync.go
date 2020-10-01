@@ -367,7 +367,7 @@ func monitorLocalClipboard(sendChanel chan string) {
 		counter = counter + 1
 		go timeoutFiveSeconds(timeoutChannel, counter)
 		go readClipboardContent(clipboardContentChannel, counter)
-		//处理命令执行超时
+		//handling command timeout for reading clipboard content
 		select {
 		case timeoutObj := <-timeoutChannel:
 			if timeoutObj.uint64 == counter {
