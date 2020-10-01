@@ -36,7 +36,7 @@ var (
 	connectedLock            sync.RWMutex
 	connectionLostStatusLock sync.RWMutex
 	clientMap                map[net.Addr]net.Conn
-	clientChannelMap		map[net.Addr]chan string
+	clientChannelMap         map[net.Addr]chan string
 	connectionLostStatusMap  map[int]bool
 )
 
@@ -125,7 +125,7 @@ func readFromRemote(c net.Conn, recvChannel chan string, closeChannel chan struc
 			if isClosedErr(err) {
 				log.Error("Disconnected")
 				delete(clientMap, c.RemoteAddr())
-				if nil != closeChannel && !getConnectionLostStatus(no){
+				if nil != closeChannel && !getConnectionLostStatus(no) {
 					_ = c.Close()
 				}
 				if setConnectionLostStatus(no, true) && nil != closeChannel {
@@ -167,7 +167,7 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 						close(clientChannel)
 					}
 					delete(clientChannelMap, conn.RemoteAddr())
-					if nil != closeChannel && !getConnectionLostStatus(no){
+					if nil != closeChannel && !getConnectionLostStatus(no) {
 						_ = conn.Close()
 					}
 					if setConnectionLostStatus(no, true) && nil != closeChannel {
@@ -181,7 +181,7 @@ func sendToRemote(conn net.Conn, senderChannel chan string, closeChannel chan st
 		}
 	}
 }
-func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
+func clientKeepAlive(conn net.Conn, closeChannel chan struct{}, no int) {
 	data := []byte(" " + string(DelimiterByte))
 	for {
 		_, err := conn.Write(data)
@@ -198,7 +198,7 @@ func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
 			if nil != closeChannel && !getConnectionLostStatus(no) {
 				_ = conn.Close()
 			}
-			if setConnectionLostStatus(no, true)  && nil != closeChannel{
+			if setConnectionLostStatus(no, true) && nil != closeChannel {
 				close(closeChannel)
 			}
 			break
@@ -206,6 +206,7 @@ func clientKeepAlive(conn net.Conn,  closeChannel chan struct{}, no int)  {
 		time.Sleep(time.Millisecond * 200)
 	}
 }
+
 /**
 启动服务器
 */
@@ -256,7 +257,7 @@ func startServer(listenHost string, port int32, recvChannel chan string, senderC
 	go func() {
 		for {
 			content := <-senderChannel
-			for _,v := range clientChannelMap {
+			for _, v := range clientChannelMap {
 				log.Debugf("Sending content '%v' to %v \n", content, v)
 				v <- content
 			}
@@ -312,10 +313,35 @@ func handleClipboardReceived(recvChannel chan string) {
 func isGeneralClipboardReadError(err error) bool {
 	return strings.Contains(fmt.Sprintf("%v", err), "The operation completed successfully");
 }
+func timeoutFiveSeconds(channel chan struct {
+	bool;
+	uint64
+}, counter uint64) {
+	time.Sleep(time.Second * 5)
+	channel <- struct {
+		bool
+		uint64
+	}{bool: true, uint64: counter}
+}
+func readClipboardContent(channel chan struct {
+	string;
+	uint64
+}, counter uint64) {
+	newContent, err := clipboard.ReadAll()
+	if nil != err && !isGeneralClipboardReadError(err) {
+		log.Errorf("Failed to read clipboard content: %v", err)
+		return
+	}
+	channel <- struct {
+		string
+		uint64
+	}{string: newContent, uint64: counter}
+}
 func monitorLocalClipboard(sendChanel chan string) {
 	/**
 	never quit
-	 */
+	*/
+
 	defer func() {
 		log.Errorf("Restarted the goroutine of monitorLocalClipboard")
 		go monitorLocalClipboard(sendChanel)
@@ -326,28 +352,47 @@ func monitorLocalClipboard(sendChanel chan string) {
 		oldContent = ""
 	}
 	setClipboardContent(oldContent)
+	timeoutChannel := make(chan struct {
+		bool;
+		uint64
+	}, 1)
+	clipboardContentChannel := make(chan struct {
+		string;
+		uint64
+	}, 1)
 	log.Infof("Started monitoring local clipboard")
+	counter := uint64(0)
 	for {
-		time.Sleep(time.Millisecond * 200)
-		newContent, err := clipboard.ReadAll()
-		if nil != err && !isGeneralClipboardReadError(err) {
-			log.Errorf("Failed to read clipboard content: %v", err)
-			continue
-		}
-		oldContent = getClipboardContent()
-		if len(newContent) > 0 && newContent != oldContent {
-			oldContent = newContent
-			setClipboardContent(newContent)
-			if runtime.GOOS == "windows" {
-				clipboard.WriteAll(oldContent)
+		time.Sleep(200 * time.Millisecond)
+		counter = counter + 1
+		go timeoutFiveSeconds(timeoutChannel, counter)
+		go readClipboardContent(clipboardContentChannel, counter)
+		//处理命令执行超时
+		select {
+		case timeoutObj := <-timeoutChannel:
+			if timeoutObj.uint64 == counter {
+				log.Errorf("Timeout when read from clipboard: " + time.Now().Format("2006-01-02 15:04:05"))
 			}
-			// client connected OR server with client connection(s)
-			log.Debugf("Is server mode ? %v; Connected ? %v; Size of client map %v", serverMode, getConnected(), len(clientMap))
-			if (getConnected() && !serverMode) || (serverMode && len(clientMap) > 0) {
-				log.Debugf("Send local clipboard change: %s", newContent)
-				sendChanel <- newContent
-			} else {
-				log.Debugf("Not connected, no need to send change: %s", newContent)
+		case newContentObj := <-clipboardContentChannel:
+			if newContentObj.uint64 != counter {
+				continue
+			}
+			newContent := newContentObj.string
+			oldContent = getClipboardContent()
+			if len(newContent) > 0 && newContent != oldContent {
+				oldContent = newContent
+				setClipboardContent(newContent)
+				if runtime.GOOS == "windows" {
+					_ = clipboard.WriteAll(oldContent)
+				}
+				// client connected OR server with client connection(s)
+				log.Debugf("Is server mode ? %v; Connected ? %v; Size of client map %v", serverMode, getConnected(), len(clientMap))
+				if (getConnected() && !serverMode) || (serverMode && len(clientMap) > 0) {
+					log.Debugf("Send local clipboard change: %s", newContent)
+					sendChanel <- newContent
+				} else {
+					log.Debugf("Not connected, no need to send change: %s", newContent)
+				}
 			}
 		}
 	}
@@ -359,7 +404,7 @@ func setupLogging(debug bool) *os.File {
 	)
 	folder, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 	fileName := filepath.Base(os.Args[0])
-	logFilePath := filepath.Join(folder, fileName + "-output.log")
+	logFilePath := filepath.Join(folder, fileName+"-output.log")
 	logFile, err := os.OpenFile(logFilePath, os.O_RDWR|os.O_CREATE, 0664)
 	if err != nil {
 		fmt.Print("Failed to open log file")
@@ -430,7 +475,6 @@ func main() {
 	}
 	// Applying clipboard content from remote
 	go handleClipboardReceived(recvChannel)
-
 	// process abort signal
 	signalChan := make(chan os.Signal, 1)
 	cleanupDone := make(chan struct{})
