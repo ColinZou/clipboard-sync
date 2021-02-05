@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"time"
@@ -442,7 +443,13 @@ func singleInstance() error {
 	}
 	return nil
 }
+func startProfile() {
 
+	defer func() {
+
+	}()
+
+}
 func main() {
 	debug, client := readCommandArguments()
 	serverMode = !client
@@ -457,6 +464,10 @@ func main() {
 		os.Exit(1)
 	}
 	log.Debugf("debug ? %v, client ? %v ", debug, client)
+	log.Infof("Startup pprof")
+	folder, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+	cpuProfile, _ := os.Create(filepath.Join(folder, "cpuProfile"))
+	ramProfile, _ := os.Create(filepath.Join("ramProfile"))
 	// Channel for receiving remote clipboard
 	recvChannel := make(chan string)
 	// Channel for sending clipboard content to remote
@@ -475,6 +486,10 @@ func main() {
 	}
 	// Applying clipboard content from remote
 	go handleClipboardReceived(recvChannel)
+	err := pprof.StartCPUProfile(cpuProfile);
+	if err != nil {
+		log.Errorf("Failed to startup cpu profiling: %v", err)
+	}
 	// process abort signal
 	signalChan := make(chan os.Signal, 1)
 	cleanupDone := make(chan struct{})
@@ -485,4 +500,9 @@ func main() {
 		close(cleanupDone)
 	}()
 	<-cleanupDone
+	pprof.StopCPUProfile()
+	err = pprof.WriteHeapProfile(ramProfile)
+	if nil != err {
+		log.Errorf("Failed to save memory profile")
+	}
 }
